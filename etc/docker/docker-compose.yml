@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  cbo-angular:
+    image: mycompanyname/cbo-angular:latest
+    container_name: cbo-angular
+    build:
+      context: ../../../
+      dockerfile: angular/Dockerfile.local
+    ports:
+      - "4200:80"
+    depends_on:
+      - cbo-api
+    volumes:
+      - ./dynamic-env.json://usr/share/nginx/html/dynamic-env.json
+    networks:
+      - abp-network
+
+  cbo-api:
+    image: mycompanyname/cbo-api:latest
+    container_name: cbo-api
+    hostname: cbo-api
+    build:
+      context: ../../
+      dockerfile: src/CBO.HttpApi.Host/Dockerfile.local
+    environment:
+      - ASPNETCORE_URLS=https://+:443;http://+:80;
+      - Kestrel__Certificates__Default__Path=/root/certificate/localhost.pfx
+      - Kestrel__Certificates__Default__Password=9b945508-8aae-4122-b6f1-51cfa414649a
+      - App__SelfUrl=https://localhost:44354
+      - App__AngularUrl=http://localhost:4200
+      - App_CorsOrigins=http://localhost:4200
+      - App__HealthCheckUrl=http://cbo-api/health-status
+      - AuthServer__RequireHttpsMetadata=false
+      - AuthServer__Authority=http://cbo-authserver
+      - AuthServer__MetaAddress=https://localhost:44334
+      - App__MVCPublicUrl=https://localhost:44306
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=CBO;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - Redis__Configuration=redis
+    ports:
+      - "44354:443"
+    depends_on:
+      sql-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy  
+    restart: on-failure    
+    volumes:
+      - ./certs:/root/certificate
+    networks:
+      - abp-network
+  
+  cbo-authserver:
+    image: mycompanyname/cbo-authserver:latest
+    container_name: cbo-authserver
+    build:
+      context: ../../
+      dockerfile: src/CBO.AuthServer/Dockerfile.local
+    environment:
+      - ASPNETCORE_URLS=https://+:443;http://+:80;
+      - App__SelfUrl=https://localhost:44334
+      - App__CorsOrigins=http://localhost:4200,https://localhost:44354
+      - AuthServer__RequireHttpsMetadata=false
+      - AuthServer__Authority=https://localhost:44334
+      - Kestrel__Certificates__Default__Path=/root/certificate/localhost.pfx
+      - Kestrel__Certificates__Default__Password=9b945508-8aae-4122-b6f1-51cfa414649a
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=CBO;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - Redis__Configuration=redis
+    ports:
+      - "44334:443"
+    depends_on:
+      sql-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+    volumes:
+      - ./certs:/root/certificate
+    networks:
+      - abp-network
+
+  cbo-web-public:
+    image: mycompanyname/cbo-web-public:latest
+    container_name: cbo-web-public
+    build:
+      context: ../../
+      dockerfile: src/CBO.Web.Public/Dockerfile.local
+    environment:
+      - ASPNETCORE_URLS=https://+:443;http://+:80;
+      - Kestrel__Certificates__Default__Path=/root/certificate/localhost.pfx
+      - Kestrel__Certificates__Default__Password=9b945508-8aae-4122-b6f1-51cfa414649a
+      - App__SelfUrl=https://localhost:44306
+      - AuthServer__RequireHttpsMetadata=false
+      - AuthServer__IsContainerized=true      
+      - RemoteServices__Default__BaseUrl=http://cbo-api
+      - AuthServer__Authority=https://localhost:44334/
+      - AuthServer__MetaAddress=http://cbo-authserver
+      - RemoteServices__AbpAccountPublic__BaseUrl=http://cbo-authserver
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=CBO;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - Redis__Configuration=redis
+    ports:
+      - "44306:443"
+    depends_on:
+      sql-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+    volumes:
+      - ./certs:/root/certificate
+    networks:
+      - abp-network  
+  db-migrator:
+    image: mycompanyname/cbo-db-migrator:latest
+    container_name: db-migrator
+    build:
+      context: ../../
+      dockerfile: src/CBO.DbMigrator/Dockerfile.local
+    environment:
+      - OpenIddict__Applications__CBO_App__RootUrl=http://localhost:4200
+      - OpenIddict__Applications__CBO_Swagger__RootUrl=https://localhost:44354
+      - OpenIddict__Applications__CBO_Web_Public_Tiered__RootUrl=https://localhost:44306
+      - OpenIddict__Applications__CBO_Web_Public__RootUrl=https://localhost:44306
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=CBO;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - Redis__Configuration=redis
+    restart: on-failure
+    depends_on:
+      sql-server:
+        condition: service_healthy
+    networks:
+      - abp-network    
+  
+  sql-server:
+    container_name: sql-server
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "1434:1433"
+    environment:
+      SA_PASSWORD: "myPassw0rd"
+      ACCEPT_EULA: "Y"
+    volumes:
+      - sqldata:/var/opt/mssql
+    networks:
+      - abp-network
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S sql-server -U sa -P "myPassw0rd" -Q "SELECT 1" -b -o /dev/null
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+  
+  redis:
+    container_name: redis
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - abp-network  
+    healthcheck:
+      test: ["CMD", "redis-cli","ping"]      
+
+volumes:
+  sqldata:
+    name: cbo_sqldata
+networks:
+  abp-network:
+    name: cbo-network
+    driver: bridge

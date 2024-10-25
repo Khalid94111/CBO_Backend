@@ -1,0 +1,8 @@
+using CBO.InterestBankLendingRates;
+using Xunit;
+
+namespace CBO.EntityFrameworkCore.Applications.InterestBankLendingRates;
+
+public class EfCoreInterestBankLendingRatesAppServiceTests : InterestBankLendingRatesAppServiceTests<CBOEntityFrameworkCoreTestModule>
+{
+}
